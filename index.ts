@@ -70,8 +70,8 @@ export async function captureVisual(
   variantName: string,
   options: { mask?: string[] } = {}
 ): Promise<void> {
-  const jobId = process.env.REGRESSIONBOT_JOB_ID || activeJobId;
-  const apiKey = process.env.REGRESSIONBOT_API_KEY || activeApiKey;
+  const jobId = activeJobId || process.env.REGRESSIONBOT_JOB_ID;
+  const apiKey = activeApiKey || process.env.REGRESSIONBOT_API_KEY;
 
   if (!jobId) {
     throw new Error('No active job found. Call initializeJob() or set REGRESSIONBOT_JOB_ID env var.');
@@ -135,7 +135,21 @@ export async function captureVisual(
     if (styleElementHandle) {
       await page.evaluate((el: any) => el?.remove(), styleElementHandle).catch(() => {});
     }
-    const errMsg = err.response?.data?.error || err.message;
+    const rawData = err.response?.data;
+    let errMsg = `${err.message} (${err.config?.method?.toUpperCase()} ${err.config?.url})`;
+    if (rawData) {
+      let details = '';
+      if (Buffer.isBuffer(rawData)) {
+        details = rawData.toString('utf-8');
+      } else if (typeof rawData === 'string') {
+        details = rawData;
+      } else if (rawData.error) {
+        details = rawData.error;
+      } else {
+        details = JSON.stringify(rawData);
+      }
+      errMsg += ` - Details: ${details}`;
+    }
     throw new Error(`RegressionBot visual capture failed: ${errMsg}`);
   }
 }
@@ -145,8 +159,8 @@ export async function captureVisual(
  * Typically called in Playwright's globalTeardown hook.
  */
 export async function finalizeJob(): Promise<void> {
-  const jobId = process.env.REGRESSIONBOT_JOB_ID || activeJobId;
-  const apiKey = process.env.REGRESSIONBOT_API_KEY || activeApiKey;
+  const jobId = activeJobId || process.env.REGRESSIONBOT_JOB_ID;
+  const apiKey = activeApiKey || process.env.REGRESSIONBOT_API_KEY;
 
   if (!jobId) {
     throw new Error('No active job to finalize.');
