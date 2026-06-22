@@ -87,7 +87,6 @@ describe('RegressionBot Playwright SDK', () => {
           },
           {
             headers: {
-              'x-api-key': 'api-key-abc',
               'Authorization': 'Bearer api-key-abc',
               'Content-Type': 'application/json',
             },
@@ -114,7 +113,7 @@ describe('RegressionBot Playwright SDK', () => {
             expect.any(Object),
             expect.objectContaining({
               headers: expect.objectContaining({
-                'x-api-key': 'env-api-key',
+                'Authorization': 'Bearer env-api-key',
               }),
             })
           );
@@ -246,7 +245,7 @@ describe('RegressionBot Playwright SDK', () => {
           { jobId: 'job-12345' },
           expect.objectContaining({
             headers: expect.objectContaining({
-              'x-api-key': 'api-key-abc',
+              'Authorization': 'Bearer api-key-abc',
             }),
           })
         );

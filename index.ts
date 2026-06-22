@@ -44,7 +44,6 @@ export async function initializeJob(config: SdkInitConfig): Promise<string> {
   try {
     const response = await axios.post(`${activeApiUrl}/sdk/job/init`, payload, {
       headers: {
-        'x-api-key': apiKey,
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
@@ -112,7 +111,6 @@ export async function captureVisual(
       },
       {
         headers: {
-          'x-api-key': apiKey,
           'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
@@ -175,7 +173,6 @@ export async function finalizeJob(): Promise<void> {
       { jobId },
       {
         headers: {
-          'x-api-key': apiKey,
           'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
