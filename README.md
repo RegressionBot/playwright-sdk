@@ -36,14 +36,18 @@ You need a RegressionBot API key to initialize jobs. Get yours from the [Dashboa
 
 ```bash
 export REGRESSIONBOT_API_KEY="your_regressionbot_api_key"
+
+# Optional: Override the API endpoint (defaults to https://api.regressionbot.com)
+export REGRESSIONBOT_API_URL="https://api.regressionbot.com"
 ```
 
 ### 2. Update Playwright Config (`playwright.config.ts`)
-Set up global initialization and finalization hooks in your global setup/teardown scripts:
+Playwright runs `globalSetup` and `globalTeardown` hooks in a separate lifecycle process. You need to define them in separate files and reference them in your config.
 
+**A. Create `global-setup.ts`:**
 ```typescript
 import { FullConfig } from '@playwright/test';
-import { initializeJob, finalizeJob } from '@regressionbot/playwright';
+import { initializeJob } from '@regressionbot/playwright';
 
 async function globalSetup(config: FullConfig) {
   await initializeJob({
@@ -53,17 +57,32 @@ async function globalSetup(config: FullConfig) {
   });
 }
 
+export default globalSetup;
+```
+
+**B. Create `global-teardown.ts`:**
+```typescript
+import { FullConfig } from '@playwright/test';
+import { finalizeJob } from '@regressionbot/playwright';
+
 async function globalTeardown(config: FullConfig) {
   await finalizeJob();
 }
 
-export default {
+export default globalTeardown;
+```
+
+**C. Update `playwright.config.ts`:**
+```typescript
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
   globalSetup: require.resolve('./global-setup'),
   globalTeardown: require.resolve('./global-teardown'),
   use: {
     baseURL: 'http://localhost:3000',
   },
-};
+});
 ```
 
 ### 3. Capture Visuals in your Spec files
@@ -95,25 +114,27 @@ test('Dashboard with dynamic widgets', async ({ page }) => {
 ## API Reference
 
 ### `initializeJob(config: SdkInitConfig): Promise<string>`
-Initiates a new visual regression job. Typically placed inside Playwright's `globalSetup`.
+Initiates a new visual regression job on the RegressionBot cloud server. Typically placed inside Playwright's `globalSetup`.
+
+Calling `initializeJob` automatically exposes the generated job ID to Playwright's worker processes via `process.env.REGRESSIONBOT_JOB_ID`.
 
 **Config Options:**
 * `project` (string, required): The RegressionBot project name.
 * `testOrigin` (string, required): The target origin URL being verified.
 * `apiKey` (string, optional): Your API key. Defaults to `process.env.REGRESSIONBOT_API_KEY`.
-* `apiUrl` (string, optional): RegressionBot API endpoint. Defaults to `https://api.regressionbot.com`.
-* `branch` (string, optional): Git branch name. Auto-detects CI branch envs if omitted.
-* `commit` (string, optional): Git commit SHA. Auto-detects CI commit envs if omitted.
+* `apiUrl` (string, optional): RegressionBot API endpoint. Defaults to `process.env.REGRESSIONBOT_API_URL`, falling back to `https://api.regressionbot.com`.
+* `branch` (string, optional): Git branch name. Defaults to `process.env.CI_COMMIT_REF_NAME`, falling back to `'main'`.
+* `commit` (string, optional): Git commit SHA. Defaults to `process.env.CI_COMMIT_SHA`, falling back to `''`.
 * `devices` (string[], optional): Viewports/devices to configure. Defaults to `['Desktop Chrome']`.
 
 ### `captureVisual(page: Page, variantName: string, options?: { mask?: string[] }): Promise<void>`
-Captures a screenshot of the page, hides dynamic element CSS selectors listed in `mask`, and uploads it to S3.
+Takes a full-page screenshot of the page (`fullPage: true`, `animations: 'disabled'`), hides dynamic element CSS selectors listed in `mask`, and uploads the screenshot directly to S3.
 * `page` (Page): The Playwright test page instance.
 * `variantName` (string): Unique label for the snapshot (e.g. `homepage_hero`, `checkout_final`).
-* `options.mask` (string[]): List of CSS selectors to hide (`visibility: hidden !important`) during screenshot capture.
+* `options.mask` (string[]): List of CSS selectors to hide (`visibility: hidden !important`) during screenshot capture. If provided, the stylesheet is automatically injected and cleaned up post-capture.
 
 ### `finalizeJob(): Promise<void>`
-Completes the current visual regression session and instructs RegressionBot to execute parallel comparisons. Typically called in Playwright's `globalTeardown`.
+Completes the current visual regression session and instructs RegressionBot to execute parallel comparisons in the cloud. Typically called in Playwright's `globalTeardown`.
 
 ---
 
