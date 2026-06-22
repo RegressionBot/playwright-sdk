@@ -1,10 +1,16 @@
 {
   "name": "@regressionbot/playwright",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Playwright integration client for RegressionBot parallel cloud visual regression comparisons",
   "Description": "Created package.json for @regressionbot/playwright SDK workspace",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
     "test": "jest"
