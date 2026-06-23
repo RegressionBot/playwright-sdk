@@ -1,12 +1,10 @@
-import axios from 'axios';
-
-jest.mock('axios');
-
 describe('RegressionBot Playwright SDK', () => {
   let envBackup: NodeJS.ProcessEnv;
+  let originalFetch: typeof fetch;
 
   beforeAll(() => {
     envBackup = { ...process.env };
+    originalFetch = global.fetch;
   });
 
   beforeEach(() => {
@@ -25,14 +23,12 @@ describe('RegressionBot Playwright SDK', () => {
 
   afterAll(() => {
     process.env = envBackup;
+    global.fetch = originalFetch;
   });
 
   // Helper to run each test in an isolated module context
   async function runIsolated(
-    fn: (
-      sdk: typeof import('./index'),
-      axiosMock: any
-    ) => Promise<void>,
+    fn: (sdk: typeof import('./index')) => Promise<void>,
     beforeRequire?: () => void
   ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
@@ -42,8 +38,7 @@ describe('RegressionBot Playwright SDK', () => {
             beforeRequire();
           }
           const sdk = require('./index');
-          const axiosMock = require('axios');
-          await fn(sdk, axiosMock);
+          await fn(sdk);
           resolve();
         } catch (err) {
           reject(err);
@@ -65,10 +60,13 @@ describe('RegressionBot Playwright SDK', () => {
     );
 
     it('initializes job successfully and sets env variable', () =>
-      runIsolated(async (sdk, axiosMock) => {
-        axiosMock.post.mockResolvedValueOnce({
-          data: { jobId: 'job-12345' },
+      runIsolated(async (sdk) => {
+        const mockFetch = jest.fn().mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ jobId: 'job-12345' }),
         });
+        global.fetch = mockFetch;
 
         const jobId = await sdk.initializeJob({
           apiKey: 'api-key-abc',
@@ -81,20 +79,21 @@ describe('RegressionBot Playwright SDK', () => {
 
         expect(jobId).toBe('job-12345');
         expect(process.env.REGRESSIONBOT_JOB_ID).toBe('job-12345');
-        expect(axiosMock.post).toHaveBeenCalledWith(
+        expect(mockFetch).toHaveBeenCalledWith(
           'https://api.regressionbot.com/ci/job/init',
           {
-            project: 'test-project',
-            branch: 'feat-test',
-            commit: 'sha-123',
-            testOrigin: 'https://test.origin',
-            devices: ['Desktop Chrome'],
-          },
-          {
+            method: 'POST',
             headers: {
               'Authorization': 'Bearer api-key-abc',
               'Content-Type': 'application/json',
             },
+            body: JSON.stringify({
+              project: 'test-project',
+              branch: 'feat-test',
+              commit: 'sha-123',
+              testOrigin: 'https://test.origin',
+              devices: ['Desktop Chrome'],
+            }),
           }
         );
       })
@@ -102,10 +101,13 @@ describe('RegressionBot Playwright SDK', () => {
 
     it('falls back to environment variables for API key and URL', () =>
       runIsolated(
-        async (sdk, axiosMock) => {
-          axiosMock.post.mockResolvedValueOnce({
-            data: { jobId: 'job-67890' },
+        async (sdk) => {
+          const mockFetch = jest.fn().mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({ jobId: 'job-67890' }),
           });
+          global.fetch = mockFetch;
 
           const jobId = await sdk.initializeJob({
             project: 'test-project',
@@ -113,10 +115,10 @@ describe('RegressionBot Playwright SDK', () => {
           });
 
           expect(jobId).toBe('job-67890');
-          expect(axiosMock.post).toHaveBeenCalledWith(
+          expect(mockFetch).toHaveBeenCalledWith(
             'https://custom.api.endpoint/ci/job/init',
-            expect.any(Object),
             expect.objectContaining({
+              method: 'POST',
               headers: expect.objectContaining({
                 'Authorization': 'Bearer env-api-key',
               }),
@@ -147,19 +149,27 @@ describe('RegressionBot Playwright SDK', () => {
       runIsolated(async (sdk) => {
         await expect(
           sdk.captureVisual(mockPage, 'homepage')
-        ).rejects.toThrow('No active job found');
+        ).rejects.toThrow('RegressionBot: No active job found');
       })
     );
 
     it('captures full-page and uploads correctly without masking options', () =>
-      runIsolated(async (sdk, axiosMock) => {
+      runIsolated(async (sdk) => {
         process.env.REGRESSIONBOT_JOB_ID = 'job-12345';
         process.env.REGRESSIONBOT_API_KEY = 'api-key-abc';
 
-        axiosMock.post.mockResolvedValueOnce({
-          data: { uploadUrl: 'https://s3.upload/job-12345/homepage.png' },
-        });
-        axiosMock.put.mockResolvedValueOnce({ status: 200 } as any);
+        const mockFetch = jest.fn()
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({ uploadUrl: 'https://cloud-storage.upload/job-12345/homepage.png' }),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            text: async () => 'OK',
+          });
+        global.fetch = mockFetch;
 
         await sdk.captureVisual(mockPage, 'homepage');
 
@@ -169,32 +179,51 @@ describe('RegressionBot Playwright SDK', () => {
           animations: 'disabled',
         });
         expect(mockPage.addStyleTag).not.toHaveBeenCalled();
-        expect(axiosMock.post).toHaveBeenCalledWith(
+        expect(mockFetch).toHaveBeenNthCalledWith(
+          1,
           'https://api.regressionbot.com/ci/job/upload-url',
           {
-            jobId: 'job-12345',
-            url: 'https://test.origin/home',
-            variantName: 'homepage',
-          },
-          expect.any(Object)
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer api-key-abc',
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              jobId: 'job-12345',
+              url: 'https://test.origin/home',
+              variantName: 'homepage',
+            }),
+          }
         );
-        expect(axiosMock.put).toHaveBeenCalledWith(
-          'https://s3.upload/job-12345/homepage.png',
-          expect.any(Buffer),
-          { headers: { 'Content-Type': 'image/png' } }
+        expect(mockFetch).toHaveBeenNthCalledWith(
+          2,
+          'https://cloud-storage.upload/job-12345/homepage.png',
+          {
+            method: 'PUT',
+            headers: { 'Content-Type': 'image/png' },
+            body: expect.any(Buffer),
+          }
         );
       })
     );
 
     it('applies and removes CSS masking style tags if mask is provided', () =>
-      runIsolated(async (sdk, axiosMock) => {
+      runIsolated(async (sdk) => {
         process.env.REGRESSIONBOT_JOB_ID = 'job-12345';
         process.env.REGRESSIONBOT_API_KEY = 'api-key-abc';
 
-        axiosMock.post.mockResolvedValueOnce({
-          data: { uploadUrl: 'https://s3.upload/job-12345/homepage.png' },
-        });
-        axiosMock.put.mockResolvedValueOnce({ status: 200 } as any);
+        const mockFetch = jest.fn()
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({ uploadUrl: 'https://cloud-storage.upload/job-12345/homepage.png' }),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            text: async () => 'OK',
+          });
+        global.fetch = mockFetch;
 
         await sdk.captureVisual(mockPage, 'homepage', {
           mask: ['.ad-banner', '#chat-widget'],
@@ -210,7 +239,7 @@ describe('RegressionBot Playwright SDK', () => {
       })
     );
 
-    it('cleans up style tags even if screenshot or S3 upload fails', () =>
+    it('cleans up style tags even if screenshot or cloud upload fails', () =>
       runIsolated(async (sdk) => {
         process.env.REGRESSIONBOT_JOB_ID = 'job-12345';
         process.env.REGRESSIONBOT_API_KEY = 'api-key-abc';
@@ -237,22 +266,29 @@ describe('RegressionBot Playwright SDK', () => {
     );
 
     it('finalizes job successfully and cleans up env state', () =>
-      runIsolated(async (sdk, axiosMock) => {
+      runIsolated(async (sdk) => {
         process.env.REGRESSIONBOT_JOB_ID = 'job-12345';
         process.env.REGRESSIONBOT_API_KEY = 'api-key-abc';
 
-        axiosMock.post.mockResolvedValueOnce({ status: 200 } as any);
+        const mockFetch = jest.fn().mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({}),
+        });
+        global.fetch = mockFetch;
 
         await sdk.finalizeJob();
 
-        expect(axiosMock.post).toHaveBeenCalledWith(
+        expect(mockFetch).toHaveBeenCalledWith(
           'https://api.regressionbot.com/ci/job/finalize',
-          { jobId: 'job-12345' },
-          expect.objectContaining({
-            headers: expect.objectContaining({
+          {
+            method: 'POST',
+            headers: {
               'Authorization': 'Bearer api-key-abc',
-            }),
-          })
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ jobId: 'job-12345' }),
+          }
         );
         expect(process.env.REGRESSIONBOT_JOB_ID).toBeUndefined();
       })
@@ -287,10 +323,12 @@ describe('RegressionBot Playwright SDK', () => {
             process.env.REGRESSIONBOT_PROJECT = 'env-project';
             process.env.REGRESSIONBOT_API_KEY = 'env-key';
 
-            const axiosMock = require('axios');
-            axiosMock.post.mockResolvedValueOnce({
-              data: { jobId: 'job-global-setup-123' },
+            const mockFetch = jest.fn().mockResolvedValueOnce({
+              ok: true,
+              status: 200,
+              json: async () => ({ jobId: 'job-global-setup-123' }),
             });
+            global.fetch = mockFetch;
 
             const globalSetup = require('./global-setup').default;
             const mockConfig: any = {
@@ -303,13 +341,18 @@ describe('RegressionBot Playwright SDK', () => {
             await globalSetup(mockConfig);
 
             expect(process.env.REGRESSIONBOT_JOB_ID).toBe('job-global-setup-123');
-            expect(axiosMock.post).toHaveBeenCalledWith(
+            expect(mockFetch).toHaveBeenCalledWith(
               'https://api.regressionbot.com/ci/job/init',
               expect.objectContaining({
-                project: 'env-project',
-                testOrigin: 'https://test-origin.example.com',
-              }),
-              expect.any(Object)
+                method: 'POST',
+                body: JSON.stringify({
+                  project: 'env-project',
+                  branch: 'main',
+                  commit: '',
+                  testOrigin: 'https://test-origin.example.com',
+                  devices: ['Desktop Chrome'],
+                }),
+              })
             );
             resolve();
           } catch (err) {
@@ -348,16 +391,26 @@ describe('RegressionBot Playwright SDK', () => {
             process.env.REGRESSIONBOT_JOB_ID = 'job-global-setup-123';
             process.env.REGRESSIONBOT_API_KEY = 'env-key';
 
-            const axiosMock = require('axios');
-            axiosMock.post.mockResolvedValueOnce({ status: 200 });
+            const mockFetch = jest.fn().mockResolvedValueOnce({
+              ok: true,
+              status: 200,
+              json: async () => ({}),
+            });
+            global.fetch = mockFetch;
 
             const globalTeardown = require('./global-teardown').default;
             await globalTeardown();
 
-            expect(axiosMock.post).toHaveBeenCalledWith(
+            expect(mockFetch).toHaveBeenCalledWith(
               'https://api.regressionbot.com/ci/job/finalize',
-              { jobId: 'job-global-setup-123' },
-              expect.any(Object)
+              {
+                method: 'POST',
+                headers: {
+                  'Authorization': 'Bearer env-key',
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ jobId: 'job-global-setup-123' }),
+              }
             );
             expect(process.env.REGRESSIONBOT_JOB_ID).toBeUndefined();
             resolve();

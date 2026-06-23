@@ -1,5 +1,4 @@
 import { Page } from '@playwright/test';
-import axios from 'axios';
 
 let activeJobId: string | null = null;
 let activeApiKey: string | null = process.env.REGRESSIONBOT_API_KEY || null;
@@ -13,6 +12,43 @@ export interface SdkInitConfig {
   commit?: string;
   testOrigin: string;
   devices?: string[];
+}
+
+/**
+ * Shared helper for RegressionBot API JSON requests.
+ */
+async function apiRequest<T>(
+  apiUrl: string,
+  path: string,
+  method: 'POST' | 'PUT',
+  apiKey: string,
+  body?: any
+): Promise<T> {
+  const url = `${apiUrl.replace(/\/$/, '')}${path}`;
+  const response = await fetch(url, {
+    method,
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    let errorJson;
+    try {
+      errorJson = JSON.parse(errorText);
+    } catch {}
+    const errMsg = errorJson?.error || errorText || response.statusText;
+    throw new Error(errMsg);
+  }
+
+  if (method === 'PUT') {
+    return {} as T;
+  }
+
+  return (await response.json()) as T;
 }
 
 /**
@@ -42,27 +78,27 @@ export async function initializeJob(config: SdkInitConfig): Promise<string> {
   };
 
   try {
-    const response = await axios.post(`${activeApiUrl}/ci/job/init`, payload, {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-    });
+    const data = await apiRequest<{ jobId: string }>(
+      activeApiUrl,
+      '/ci/job/init',
+      'POST',
+      apiKey,
+      payload
+    );
 
-    activeJobId = response.data.jobId;
+    activeJobId = data.jobId;
     if (activeJobId) {
       process.env.REGRESSIONBOT_JOB_ID = activeJobId;
     }
     return activeJobId!;
   } catch (err: any) {
-    const errMsg = err.response?.data?.error || err.message;
-    throw new Error(`Failed to initialize RegressionBot job: ${errMsg}`);
+    throw new Error(`Failed to initialize RegressionBot job: ${err.message}`);
   }
 }
 
 /**
  * Captures a visual snapshot of the page, applies element masking,
- * requests a presigned upload URL, and uploads the screenshot directly to S3.
+ * requests a presigned upload URL, and uploads the screenshot directly to cloud storage.
  */
 export async function captureVisual(
   page: Page,
@@ -103,55 +139,43 @@ export async function captureVisual(
       styleElementHandle = null;
     }
 
-    // 4. Request S3 presigned PUT URL
-    const uploadUrlEndpoint = `${activeApiUrl}/ci/job/upload-url`;
-    const response = await axios.post(
-      uploadUrlEndpoint,
+    // 4. Request presigned upload URL
+    const data = await apiRequest<{ uploadUrl: string }>(
+      activeApiUrl,
+      '/ci/job/upload-url',
+      'POST',
+      apiKey,
       {
         jobId,
         url: page.url(),
         variantName,
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
       }
     );
 
-    const { uploadUrl } = response.data;
+    const { uploadUrl } = data;
     if (!uploadUrl) {
-      throw new Error('Upload endpoint failed to return presigned S3 URL.');
+      throw new Error('Upload endpoint failed to return presigned upload URL.');
     }
 
-    // 5. Perform direct S3 upload
-    await axios.put(uploadUrl, buffer, {
+    // 5. Perform direct cloud storage upload
+    const uploadResponse = await fetch(uploadUrl, {
+      method: 'PUT',
       headers: {
         'Content-Type': 'image/png',
       },
+      body: buffer as any,
     });
+
+    if (!uploadResponse.ok) {
+      const errorText = await uploadResponse.text();
+      throw new Error(`Cloud storage upload failed: ${uploadResponse.statusText} - ${errorText}`);
+    }
   } catch (err: any) {
     // Make sure styles are removed on error
     if (styleElementHandle) {
       await page.evaluate((el: any) => el?.remove(), styleElementHandle).catch(() => {});
     }
-    const rawData = err.response?.data;
-    let errMsg = `${err.message} (${err.config?.method?.toUpperCase()} ${err.config?.url})`;
-    if (rawData) {
-      let details = '';
-      if (Buffer.isBuffer(rawData)) {
-        details = rawData.toString('utf-8');
-      } else if (typeof rawData === 'string') {
-        details = rawData;
-      } else if (rawData.error) {
-        details = rawData.error;
-      } else {
-        details = JSON.stringify(rawData);
-      }
-      errMsg += ` - Details: ${details}`;
-    }
-    throw new Error(`RegressionBot visual capture failed: ${errMsg}`);
+    throw new Error(`RegressionBot visual capture failed: ${err.message}`);
   }
 }
 
@@ -171,23 +195,19 @@ export async function finalizeJob(): Promise<void> {
   }
 
   try {
-    await axios.post(
-      `${activeApiUrl}/ci/job/finalize`,
-      { jobId },
-      {
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-      }
+    await apiRequest(
+      activeApiUrl,
+      '/ci/job/finalize',
+      'POST',
+      apiKey,
+      { jobId }
     );
 
     // Reset local state
     activeJobId = null;
     delete process.env.REGRESSIONBOT_JOB_ID;
   } catch (err: any) {
-    const errMsg = err.response?.data?.error || err.message;
-    throw new Error(`Failed to finalize RegressionBot job: ${errMsg}`);
+    throw new Error(`Failed to finalize RegressionBot job: ${err.message}`);
   }
 }
 
@@ -195,4 +215,3 @@ export async function finalizeJob(): Promise<void> {
  * Alias for captureVisual.
  */
 export const captureScreenshot = captureVisual;
-

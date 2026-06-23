@@ -1,18 +1,28 @@
 # @regressionbot/playwright
 
-The official Playwright integration client for **[RegressionBot](https://regressionbot.com)** — the commercial SaaS cloud-based visual regression testing platform. 
+The official Playwright package for **[RegressionBot.com](https://regressionbot.com)** — the simplest way to automate visual regression testing.
 
-RegressionBot crawls your pages, captures high-resolution screenshots across multiple device viewports, performs pixel-level structural comparisons (SSIM) in the cloud, and utilizes AWS Bedrock to generate plain-English explanations of visual layout changes.
+RegressionBot is a declarative visual regression testing platform that helps you catch UI changes before they reach production. This Playwright package integrates directly into your E2E test suite to upload page snapshots and run visual comparisons automatically.
 
-[![RegressionBot Docs](https://img.shields.io/badge/docs-regressionbot.com-blueviolet?style=for-the-badge)](https://regressionbot.com/docs)
+[![RegressionBot Docs](https://img.shields.io/badge/docs-regressionbot.com-4be277?style=for-the-badge&labelColor=0b0f14)](https://regressionbot.com/docs)
+
+---
+
+## Why RegressionBot?
+
+Unlike traditional visual diffing libraries, RegressionBot is designed for modern, automated development loops and agentic pipelines:
+
+- **Highly Accurate Regressions (Zero Noise)**: Leveraging advanced pixel-matching algorithms and element masking (using CSS selectors), RegressionBot eliminates false positives caused by dynamic data, layout shifting, or third-party widgets.
+- **Plain-English Summaries**: No more manual screenshot comparisons. RegressionBot translates visual diffs into concise, plain-English descriptions of what changed, so you know exactly what was modified at a glance.
+- **Agentic Workflow Ready**: Built from the ground up to support autonomous coding agents and automated developer loops. Through standard API endpoints, CLI commands, and integrations, agents can trigger tests, read plain-English results, and approve baseline changes programmatically without human intervention.
 
 ---
 
 ## Key Features
 
-* 🚀 **Offload Comparison Overhead:** Captures and uploads screenshots directly from Playwright execution and delegates heavy-lifting pixel matching (SSIM) to the RegressionBot parallel cloud engine.
+* 🚀 **Offload Comparison Overhead:** Captures and uploads screenshots directly from Playwright execution and delegates heavy-lifting pixel matching to the RegressionBot parallel cloud engine.
 * 👁️ **Visual Element Masking:** Mask dynamic components (e.g., ad banners, live timers, user avatars) before capture to prevent false positives.
-* 🤖 **AI-Powered Diff Summaries:** Generates AWS Bedrock-powered plain-English explanations of exactly what changed (e.g., text reflows, styling changes, button movement) instead of raw pixel maps.
+* 🤖 **AI-Powered Diff Summaries:** Generates natural, plain-English explanations of exactly what changed (e.g., text reflows, styling changes, button movement) instead of raw pixel maps.
 * 📱 **Multi-Viewport & Responsive:** Run snapshots under multiple device variants simultaneously.
 
 ---
@@ -72,7 +82,7 @@ import { captureScreenshot } from '@regressionbot/playwright';
 test('Homepage visual verification', async ({ page }) => {
   await page.goto('/');
   
-  // Captures full-page view, uploads it to S3, and compares it to the project baseline
+  // Captures full-page view, uploads it to cloud storage, and compares it to the project baseline
   await captureScreenshot(page, 'homepage_desktop');
 });
 
@@ -193,7 +203,7 @@ Calling `initializeJob` automatically exposes the generated job ID to Playwright
 * `devices` (string[], optional): Viewports/devices to configure. Defaults to `['Desktop Chrome']`.
 
 ### `captureScreenshot(page: Page, variantName: string, options?: { mask?: string[] }): Promise<void>`
-Alias for `captureVisual`. Takes a full-page screenshot of the page (`fullPage: true`, `animations: 'disabled'`), hides dynamic element CSS selectors listed in `mask`, and uploads the screenshot directly to S3.
+Alias for `captureVisual`. Takes a full-page screenshot of the page (`fullPage: true`, `animations: 'disabled'`), hides dynamic element CSS selectors listed in `mask`, and uploads the screenshot directly to cloud storage.
 * `page` (Page): The Playwright test page instance.
 * `variantName` (string): Unique label for the snapshot (e.g. `homepage_hero`, `checkout_final`).
 * `options.mask` (string[]): List of CSS selectors to hide (`visibility: hidden !important`) during screenshot capture. If provided, the stylesheet is automatically injected and cleaned up post-capture.
