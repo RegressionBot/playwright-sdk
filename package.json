@@ -1,10 +1,24 @@
 {
   "name": "@regressionbot/playwright",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Playwright integration client for RegressionBot parallel cloud visual regression comparisons",
   "Description": "Created package.json for @regressionbot/playwright SDK workspace",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./global-setup": {
+      "types": "./dist/global-setup.d.ts",
+      "default": "./dist/global-setup.js"
+    },
+    "./global-teardown": {
+      "types": "./dist/global-teardown.d.ts",
+      "default": "./dist/global-teardown.js"
+    }
+  },
   "files": [
     "dist"
   ],
@@ -27,9 +41,7 @@
   "peerDependencies": {
     "@playwright/test": "^1.0.0"
   },
-  "dependencies": {
-    "axios": "^1.6.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "jest": "^30.2.0",
