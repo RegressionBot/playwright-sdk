@@ -42,37 +42,73 @@ export REGRESSIONBOT_API_URL="https://api.regressionbot.com"
 ```
 
 ### 2. Update Playwright Config (`playwright.config.ts`)
-Playwright runs `globalSetup` and `globalTeardown` hooks in a separate lifecycle process. You need to define them in separate files and reference them in your config.
+You can register the pre-packaged setup and teardown hooks directly in your config file. Playwright will run them automatically to initialize and finalize the visual regression job on the RegressionBot servers.
 
-**A. Create `global-setup.ts`:**
 ```typescript
-import { FullConfig } from '@playwright/test';
-import { initializeJob } from '@regressionbot/playwright';
+import { defineConfig } from '@playwright/test';
 
-async function globalSetup(config: FullConfig) {
-  await initializeJob({
-    project: 'my-frontend-app',
-    testOrigin: 'http://localhost:3000', // The base URL where tests are running locally/CI
-    devices: ['Desktop Chrome', 'iPhone 13'],
+export default defineConfig({
+  // Register pre-packaged global hooks from the SDK
+  globalSetup: require.resolve('@regressionbot/playwright/global-setup'),
+  globalTeardown: require.resolve('@regressionbot/playwright/global-teardown'),
+  use: {
+    baseURL: 'http://localhost:3000',
+    // Set your project name here (or use REGRESSIONBOT_PROJECT environment variable)
+    regressionbotProject: 'my-frontend-app',
+  },
+});
+```
+
+> [!NOTE]
+> If you already have custom `globalSetup` and `globalTeardown` scripts in your codebase, you can import and call `initializeJob()` and `finalizeJob()` within your existing scripts. See the [Custom Setup / Teardown Integration](#custom-setup--teardown-integration) section below.
+
+### 3. Capture Visuals in your Spec files
+Call `captureScreenshot` (or `captureVisual`) inside your test cases to queue screenshot capturing.
+
+```typescript
+import { test } from '@playwright/test';
+import { captureScreenshot } from '@regressionbot/playwright';
+
+test('Homepage visual verification', async ({ page }) => {
+  await page.goto('/');
+  
+  // Captures full-page view, uploads it to S3, and compares it to the project baseline
+  await captureScreenshot(page, 'homepage_desktop');
+});
+
+test('Dashboard with dynamic widgets', async ({ page }) => {
+  await page.goto('/dashboard');
+  
+  // Hide live graphs or user info that changes on every render
+  await captureScreenshot(page, 'dashboard_metrics', {
+    mask: ['.dynamic-charts', '.user-welcome-message', 'time.live-clock']
   });
-}
-
-export default globalSetup;
+});
 ```
 
-**B. Create `global-teardown.ts`:**
-```typescript
-import { FullConfig } from '@playwright/test';
-import { finalizeJob } from '@regressionbot/playwright';
+---
 
-async function globalTeardown(config: FullConfig) {
-  await finalizeJob();
-}
+## Environment Configuration
 
-export default globalTeardown;
-```
+When using the pre-packaged `global-setup` hook, it will automatically extract settings from the following environment variables:
 
-**C. Update `playwright.config.ts`:**
+| Environment Variable | Description | Playwright Config Fallback | Default |
+| :--- | :--- | :--- | :--- |
+| `REGRESSIONBOT_PROJECT` | The project name in the RegressionBot dashboard. | `use.regressionbotProject` or `metadata.regressionbotProject` | *Required* |
+| `REGRESSIONBOT_TEST_ORIGIN` | The base URL where the tests are running. | `use.baseURL` or `projects[0].use.baseURL` | *Required* |
+| `REGRESSIONBOT_API_KEY` | Your project's API authentication key. | - | *Required* |
+| `REGRESSIONBOT_API_URL` | Override the cloud API endpoint (e.g. for private instances). | - | `https://api.regressionbot.com` |
+| `REGRESSIONBOT_BRANCH` | Git branch name. | `CI_COMMIT_REF_NAME` | `'main'` |
+| `REGRESSIONBOT_COMMIT` | Git commit hash. | `CI_COMMIT_SHA` | `''` |
+| `REGRESSIONBOT_DEVICES` | Comma-separated list of devices (e.g. `Desktop Chrome,iPhone 13`). | - | `['Desktop Chrome']` |
+
+---
+
+## Custom Setup / Teardown Integration
+
+If you have existing custom global setup/teardown files configured, you can call our SDK core functions inside them:
+
+**1. Update `playwright.config.ts`:**
 ```typescript
 import { defineConfig } from '@playwright/test';
 
@@ -85,28 +121,35 @@ export default defineConfig({
 });
 ```
 
-### 3. Capture Visuals in your Spec files
-Call `captureVisual` inside your test cases to queue screenshot capturing.
-
+**2. Inside your custom `global-setup.ts`:**
 ```typescript
-import { test } from '@playwright/test';
-import { captureVisual } from '@regressionbot/playwright';
+import { FullConfig } from '@playwright/test';
+import { initializeJob } from '@regressionbot/playwright';
 
-test('Homepage visual verification', async ({ page }) => {
-  await page.goto('/');
+async function globalSetup(config: FullConfig) {
+  // Your other custom setup steps...
   
-  // Captures full-page view, uploads it to S3, and compares it to the project baseline
-  await captureVisual(page, 'homepage_desktop');
-});
-
-test('Dashboard with dynamic widgets', async ({ page }) => {
-  await page.goto('/dashboard');
-  
-  // Hide live graphs or user info that changes on every render
-  await captureVisual(page, 'dashboard_metrics', {
-    mask: ['.dynamic-charts', '.user-welcome-message', 'time.live-clock']
+  await initializeJob({
+    project: 'my-frontend-app',
+    testOrigin: config.use.baseURL || 'http://localhost:3000',
+    apiKey: process.env.REGRESSIONBOT_API_KEY,
   });
-});
+}
+
+export default globalSetup;
+```
+
+**3. Inside your custom `global-teardown.ts`:**
+```typescript
+import { finalizeJob } from '@regressionbot/playwright';
+
+async function globalTeardown() {
+  // Your other custom teardown steps...
+
+  await finalizeJob();
+}
+
+export default globalTeardown;
 ```
 
 ---
@@ -127,11 +170,14 @@ Calling `initializeJob` automatically exposes the generated job ID to Playwright
 * `commit` (string, optional): Git commit SHA. Defaults to `process.env.CI_COMMIT_SHA`, falling back to `''`.
 * `devices` (string[], optional): Viewports/devices to configure. Defaults to `['Desktop Chrome']`.
 
-### `captureVisual(page: Page, variantName: string, options?: { mask?: string[] }): Promise<void>`
-Takes a full-page screenshot of the page (`fullPage: true`, `animations: 'disabled'`), hides dynamic element CSS selectors listed in `mask`, and uploads the screenshot directly to S3.
+### `captureScreenshot(page: Page, variantName: string, options?: { mask?: string[] }): Promise<void>`
+Alias for `captureVisual`. Takes a full-page screenshot of the page (`fullPage: true`, `animations: 'disabled'`), hides dynamic element CSS selectors listed in `mask`, and uploads the screenshot directly to S3.
 * `page` (Page): The Playwright test page instance.
 * `variantName` (string): Unique label for the snapshot (e.g. `homepage_hero`, `checkout_final`).
 * `options.mask` (string[]): List of CSS selectors to hide (`visibility: hidden !important`) during screenshot capture. If provided, the stylesheet is automatically injected and cleaned up post-capture.
+
+### `captureVisual(page: Page, variantName: string, options?: { mask?: string[] }): Promise<void>`
+Alternative name for `captureScreenshot`. Captures and uploads a full-page screenshot with optional CSS masking.
 
 ### `finalizeJob(): Promise<void>`
 Completes the current visual regression session and instructs RegressionBot to execute parallel comparisons in the cloud. Typically called in Playwright's `globalTeardown`.

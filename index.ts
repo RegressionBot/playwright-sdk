@@ -73,7 +73,10 @@ export async function captureVisual(
   const apiKey = activeApiKey || process.env.REGRESSIONBOT_API_KEY;
 
   if (!jobId) {
-    throw new Error('No active job found. Call initializeJob() or set REGRESSIONBOT_JOB_ID env var.');
+    throw new Error(
+      'RegressionBot: No active job found. Please ensure you have registered the globalSetup hook in playwright.config.ts:\n\n' +
+        "  globalSetup: require.resolve('@regressionbot/playwright/global-setup')\n"
+    );
   }
   if (!apiKey) {
     throw new Error('API Key is missing. Set REGRESSIONBOT_API_KEY env var.');
@@ -187,3 +190,9 @@ export async function finalizeJob(): Promise<void> {
     throw new Error(`Failed to finalize RegressionBot job: ${errMsg}`);
   }
 }
+
+/**
+ * Alias for captureVisual.
+ */
+export const captureScreenshot = captureVisual;
+

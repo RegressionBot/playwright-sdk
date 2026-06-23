@@ -16,6 +16,11 @@ describe('RegressionBot Playwright SDK', () => {
     delete process.env.REGRESSIONBOT_API_KEY;
     delete process.env.REGRESSIONBOT_API_URL;
     delete process.env.REGRESSIONBOT_JOB_ID;
+    delete process.env.REGRESSIONBOT_PROJECT;
+    delete process.env.REGRESSIONBOT_TEST_ORIGIN;
+    delete process.env.REGRESSIONBOT_DEVICES;
+    delete process.env.REGRESSIONBOT_BRANCH;
+    delete process.env.REGRESSIONBOT_COMMIT;
   });
 
   afterAll(() => {
@@ -252,5 +257,115 @@ describe('RegressionBot Playwright SDK', () => {
         expect(process.env.REGRESSIONBOT_JOB_ID).toBeUndefined();
       })
     );
+  });
+
+  describe('captureScreenshot alias', () => {
+    it('is defined and aliases captureVisual', () =>
+      runIsolated(async (sdk) => {
+        expect(sdk.captureScreenshot).toBe(sdk.captureVisual);
+      })
+    );
+  });
+
+  describe('captureVisual error diagnostics', () => {
+    it('throws a detailed error pointing to global-setup if no job exists', () =>
+      runIsolated(async (sdk) => {
+        const mockPage: any = {};
+        await expect(sdk.captureVisual(mockPage, 'homepage')).rejects.toThrow(
+          "RegressionBot: No active job found. Please ensure you have registered the globalSetup hook in playwright.config.ts:\n\n" +
+            "  globalSetup: require.resolve('@regressionbot/playwright/global-setup')"
+        );
+      })
+    );
+  });
+
+  describe('packaged global hooks', () => {
+    it('globalSetup extracts configuration and calls initializeJob', async () => {
+      return new Promise<void>((resolve, reject) => {
+        jest.isolateModules(async () => {
+          try {
+            process.env.REGRESSIONBOT_PROJECT = 'env-project';
+            process.env.REGRESSIONBOT_API_KEY = 'env-key';
+
+            const axiosMock = require('axios');
+            axiosMock.post.mockResolvedValueOnce({
+              data: { jobId: 'job-global-setup-123' },
+            });
+
+            const globalSetup = require('./global-setup').default;
+            const mockConfig: any = {
+              use: {
+                baseURL: 'https://test-origin.example.com',
+              },
+              projects: [],
+            };
+
+            await globalSetup(mockConfig);
+
+            expect(process.env.REGRESSIONBOT_JOB_ID).toBe('job-global-setup-123');
+            expect(axiosMock.post).toHaveBeenCalledWith(
+              'https://api.regressionbot.com/sdk/job/init',
+              expect.objectContaining({
+                project: 'env-project',
+                testOrigin: 'https://test-origin.example.com',
+              }),
+              expect.any(Object)
+            );
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        });
+      });
+    });
+
+    it('globalSetup throws if project name is missing', async () => {
+      return new Promise<void>((resolve, reject) => {
+        jest.isolateModules(async () => {
+          try {
+            const globalSetup = require('./global-setup').default;
+            const mockConfig: any = {
+              use: {
+                baseURL: 'https://test-origin.example.com',
+              },
+            };
+
+            await expect(globalSetup(mockConfig)).rejects.toThrow(
+              'REGRESSIONBOT_PROJECT environment variable is required'
+            );
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        });
+      });
+    });
+
+    it('globalTeardown calls finalizeJob', async () => {
+      return new Promise<void>((resolve, reject) => {
+        jest.isolateModules(async () => {
+          try {
+            process.env.REGRESSIONBOT_JOB_ID = 'job-global-setup-123';
+            process.env.REGRESSIONBOT_API_KEY = 'env-key';
+
+            const axiosMock = require('axios');
+            axiosMock.post.mockResolvedValueOnce({ status: 200 });
+
+            const globalTeardown = require('./global-teardown').default;
+            await globalTeardown();
+
+            expect(axiosMock.post).toHaveBeenCalledWith(
+              'https://api.regressionbot.com/sdk/job/finalize',
+              { jobId: 'job-global-setup-123' },
+              expect.any(Object)
+            );
+            expect(process.env.REGRESSIONBOT_JOB_ID).toBeUndefined();
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        });
+      });
+    });
   });
 });

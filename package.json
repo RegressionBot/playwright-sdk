@@ -5,6 +5,20 @@
   "Description": "Created package.json for @regressionbot/playwright SDK workspace",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./global-setup": {
+      "types": "./dist/global-setup.d.ts",
+      "default": "./dist/global-setup.js"
+    },
+    "./global-teardown": {
+      "types": "./dist/global-teardown.d.ts",
+      "default": "./dist/global-teardown.js"
+    }
+  },
   "files": [
     "dist"
   ],
