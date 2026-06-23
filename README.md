@@ -106,22 +106,44 @@ When using the pre-packaged `global-setup` hook, it will automatically extract s
 
 ## Custom Setup / Teardown Integration
 
-If you have existing custom global setup/teardown files configured, you can call our SDK core functions inside them:
+If you have existing custom global setup/teardown files configured, you can integrate RegressionBot in one of two ways:
 
-**1. Update `playwright.config.ts`:**
+### Approach 1: Composing with Pre-packaged Hooks (Recommended)
+You can import and execute our pre-packaged `global-setup` and `global-teardown` default functions inside your existing files. This utilizes our built-in configuration and environment parser without any boilerplate.
+
+**In your custom `global-setup.ts`:**
 ```typescript
-import { defineConfig } from '@playwright/test';
+import { FullConfig } from '@playwright/test';
+import regressionbotSetup from '@regressionbot/playwright/global-setup';
 
-export default defineConfig({
-  globalSetup: require.resolve('./global-setup'),
-  globalTeardown: require.resolve('./global-teardown'),
-  use: {
-    baseURL: 'http://localhost:3000',
-  },
-});
+async function globalSetup(config: FullConfig) {
+  // Your other custom setup steps...
+
+  // Delegate initialization to the pre-packaged setup hook
+  await regressionbotSetup(config);
+}
+
+export default globalSetup;
 ```
 
-**2. Inside your custom `global-setup.ts`:**
+**In your custom `global-teardown.ts`:**
+```typescript
+import regressionbotTeardown from '@regressionbot/playwright/global-teardown';
+
+async function globalTeardown() {
+  // Your other custom teardown steps...
+
+  // Delegate finalization to the pre-packaged teardown hook
+  await regressionbotTeardown();
+}
+
+export default globalTeardown;
+```
+
+### Approach 2: Direct API Calls (Manual Configuration)
+If you want fine-grained control or want to construct the initialization parameters dynamically in code, you can invoke `initializeJob` and `finalizeJob` manually.
+
+**In your custom `global-setup.ts`:**
 ```typescript
 import { FullConfig } from '@playwright/test';
 import { initializeJob } from '@regressionbot/playwright';
@@ -139,7 +161,7 @@ async function globalSetup(config: FullConfig) {
 export default globalSetup;
 ```
 
-**3. Inside your custom `global-teardown.ts`:**
+**In your custom `global-teardown.ts`:**
 ```typescript
 import { finalizeJob } from '@regressionbot/playwright';
 
