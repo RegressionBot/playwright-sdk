@@ -42,7 +42,7 @@ export async function initializeJob(config: SdkInitConfig): Promise<string> {
   };
 
   try {
-    const response = await axios.post(`${activeApiUrl}/sdk/job/init`, payload, {
+    const response = await axios.post(`${activeApiUrl}/ci/job/init`, payload, {
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
@@ -104,7 +104,7 @@ export async function captureVisual(
     }
 
     // 4. Request S3 presigned PUT URL
-    const uploadUrlEndpoint = `${activeApiUrl}/sdk/job/upload-url`;
+    const uploadUrlEndpoint = `${activeApiUrl}/ci/job/upload-url`;
     const response = await axios.post(
       uploadUrlEndpoint,
       {
@@ -172,7 +172,7 @@ export async function finalizeJob(): Promise<void> {
 
   try {
     await axios.post(
-      `${activeApiUrl}/sdk/job/finalize`,
+      `${activeApiUrl}/ci/job/finalize`,
       { jobId },
       {
         headers: {

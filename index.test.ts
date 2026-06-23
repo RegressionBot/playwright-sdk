@@ -82,7 +82,7 @@ describe('RegressionBot Playwright SDK', () => {
         expect(jobId).toBe('job-12345');
         expect(process.env.REGRESSIONBOT_JOB_ID).toBe('job-12345');
         expect(axiosMock.post).toHaveBeenCalledWith(
-          'https://api.regressionbot.com/sdk/job/init',
+          'https://api.regressionbot.com/ci/job/init',
           {
             project: 'test-project',
             branch: 'feat-test',
@@ -114,7 +114,7 @@ describe('RegressionBot Playwright SDK', () => {
 
           expect(jobId).toBe('job-67890');
           expect(axiosMock.post).toHaveBeenCalledWith(
-            'https://custom.api.endpoint/sdk/job/init',
+            'https://custom.api.endpoint/ci/job/init',
             expect.any(Object),
             expect.objectContaining({
               headers: expect.objectContaining({
@@ -170,7 +170,7 @@ describe('RegressionBot Playwright SDK', () => {
         });
         expect(mockPage.addStyleTag).not.toHaveBeenCalled();
         expect(axiosMock.post).toHaveBeenCalledWith(
-          'https://api.regressionbot.com/sdk/job/upload-url',
+          'https://api.regressionbot.com/ci/job/upload-url',
           {
             jobId: 'job-12345',
             url: 'https://test.origin/home',
@@ -246,7 +246,7 @@ describe('RegressionBot Playwright SDK', () => {
         await sdk.finalizeJob();
 
         expect(axiosMock.post).toHaveBeenCalledWith(
-          'https://api.regressionbot.com/sdk/job/finalize',
+          'https://api.regressionbot.com/ci/job/finalize',
           { jobId: 'job-12345' },
           expect.objectContaining({
             headers: expect.objectContaining({
@@ -304,7 +304,7 @@ describe('RegressionBot Playwright SDK', () => {
 
             expect(process.env.REGRESSIONBOT_JOB_ID).toBe('job-global-setup-123');
             expect(axiosMock.post).toHaveBeenCalledWith(
-              'https://api.regressionbot.com/sdk/job/init',
+              'https://api.regressionbot.com/ci/job/init',
               expect.objectContaining({
                 project: 'env-project',
                 testOrigin: 'https://test-origin.example.com',
@@ -355,7 +355,7 @@ describe('RegressionBot Playwright SDK', () => {
             await globalTeardown();
 
             expect(axiosMock.post).toHaveBeenCalledWith(
-              'https://api.regressionbot.com/sdk/job/finalize',
+              'https://api.regressionbot.com/ci/job/finalize',
               { jobId: 'job-global-setup-123' },
               expect.any(Object)
             );
