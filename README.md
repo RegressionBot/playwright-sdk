@@ -12,7 +12,7 @@ RegressionBot is a declarative visual regression testing platform that helps you
 
 Unlike traditional visual diffing libraries, RegressionBot is designed for modern, automated development loops and agentic pipelines:
 
-- **Highly Accurate Regressions (Zero Noise)**: Leveraging advanced pixel-matching algorithms and element masking (using CSS selectors), RegressionBot eliminates false positives caused by dynamic data, layout shifting, or third-party widgets.
+- **Highly Accurate Regressions (Low Noise)**: Leveraging advanced pixel-matching algorithms and element masking (using CSS selectors), RegressionBot minimizes false positives caused by dynamic data, layout shifting, or third-party widgets.
 - **Plain-English Summaries**: No more manual screenshot comparisons. RegressionBot translates visual diffs into concise, plain-English descriptions of what changed, so you know exactly what was modified at a glance.
 - **Agentic Workflow Ready**: Built from the ground up to support autonomous coding agents and automated developer loops. Through standard API endpoints, CLI commands, and integrations, agents can trigger tests, read plain-English results, and approve baseline changes programmatically without human intervention.
 
