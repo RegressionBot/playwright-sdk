@@ -51,6 +51,9 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Upgrade NPM
+        run: npm install -g npm@latest
+
       - name: Install Dependencies
         run: npm ci
 
