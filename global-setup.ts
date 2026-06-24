@@ -38,6 +38,23 @@ async function globalSetup(config: FullConfig) {
   const commit = process.env.REGRESSIONBOT_COMMIT || process.env.CI_COMMIT_SHA;
   const devices = process.env.REGRESSIONBOT_DEVICES?.split(',').map((d) => d.trim()) || undefined;
 
+  // New configuration options
+  let awaitResults: boolean = true;
+  if (process.env.REGRESSIONBOT_AWAIT_RESULTS !== undefined) {
+    awaitResults = process.env.REGRESSIONBOT_AWAIT_RESULTS === 'true';
+  } else if ((config as any).use?.regressionbotAwaitResults !== undefined) {
+    awaitResults = (config as any).use.regressionbotAwaitResults;
+  } else if ((config as any).metadata?.regressionbotAwaitResults !== undefined) {
+    awaitResults = (config as any).metadata.regressionbotAwaitResults;
+  }
+
+  const awaitTimeoutMs =
+    process.env.REGRESSIONBOT_AWAIT_TIMEOUT_MS
+      ? parseInt(process.env.REGRESSIONBOT_AWAIT_TIMEOUT_MS, 10)
+      : (config as any).use?.regressionbotAwaitTimeoutMs ||
+        (config as any).metadata?.regressionbotAwaitTimeoutMs ||
+        undefined;
+
   await initializeJob({
     project,
     testOrigin,
@@ -46,6 +63,8 @@ async function globalSetup(config: FullConfig) {
     branch,
     commit,
     devices,
+    awaitResults,
+    awaitTimeoutMs,
   });
 }
 

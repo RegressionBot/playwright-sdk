@@ -265,10 +265,21 @@ describe('RegressionBot Playwright SDK', () => {
       })
     );
 
-    it('finalizes job successfully and cleans up env state', () =>
+    it('finalizes job successfully and cleans up env state (non-blocking)', () =>
       runIsolated(async (sdk) => {
-        process.env.REGRESSIONBOT_JOB_ID = 'job-12345';
-        process.env.REGRESSIONBOT_API_KEY = 'api-key-abc';
+        // Initialize with awaitResults: false to test non-blocking mode
+        const mockInitFetch = jest.fn().mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ jobId: 'job-12345' }),
+        });
+        global.fetch = mockInitFetch;
+        await sdk.initializeJob({
+          project: 'test-project',
+          testOrigin: 'https://test.origin',
+          awaitResults: false,
+          apiKey: 'api-key-abc',
+        });
 
         const mockFetch = jest.fn().mockResolvedValueOnce({
           ok: true,
@@ -289,6 +300,208 @@ describe('RegressionBot Playwright SDK', () => {
             },
             body: JSON.stringify({ jobId: 'job-12345' }),
           }
+        );
+        expect(process.env.REGRESSIONBOT_JOB_ID).toBeUndefined();
+      })
+    );
+
+    it('polls and completes successfully when awaitResults is true', () =>
+      runIsolated(async (sdk) => {
+        const mockInitFetch = jest.fn().mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ jobId: 'job-12345' }),
+        });
+        global.fetch = mockInitFetch;
+        await sdk.initializeJob({
+          project: 'test-project',
+          testOrigin: 'https://test.origin',
+          awaitResults: true,
+          awaitTimeoutMs: 5000,
+          apiKey: 'api-key-abc',
+        });
+
+        const mockFetch = jest.fn()
+          // 1. Finalize
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({}),
+          })
+          // 2. Poll Status (first call is PROCESSING)
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({ status: 'PROCESSING', summaryStatus: 'PENDING' }),
+          })
+          // 3. Poll Status (second call is COMPLETED + COMPLETE)
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({ status: 'COMPLETED', summaryStatus: 'COMPLETE' }),
+          })
+          // 4. Get Summary
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              status: 'COMPLETED',
+              overallScore: 98.5,
+              totalUrls: 5,
+              regressionCount: 0,
+              regressions: [],
+            }),
+          });
+        global.fetch = mockFetch;
+
+        await sdk.finalizeJob();
+
+        expect(mockFetch).toHaveBeenNthCalledWith(
+          1,
+          'https://api.regressionbot.com/ci/job/finalize',
+          expect.objectContaining({ method: 'POST' })
+        );
+        expect(mockFetch).toHaveBeenNthCalledWith(
+          2,
+          'https://api.regressionbot.com/job/job-12345',
+          expect.objectContaining({ method: 'GET' })
+        );
+        expect(mockFetch).toHaveBeenNthCalledWith(
+          3,
+          'https://api.regressionbot.com/job/job-12345',
+          expect.objectContaining({ method: 'GET' })
+        );
+        expect(mockFetch).toHaveBeenNthCalledWith(
+          4,
+          'https://api.regressionbot.com/job/job-12345/summary',
+          expect.objectContaining({ method: 'GET' })
+        );
+        expect(process.env.REGRESSIONBOT_JOB_ID).toBeUndefined();
+      })
+    );
+
+    it('throws error when regressions are detected', () =>
+      runIsolated(async (sdk) => {
+        const mockInitFetch = jest.fn().mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ jobId: 'job-12345' }),
+        });
+        global.fetch = mockInitFetch;
+        await sdk.initializeJob({
+          project: 'test-project',
+          testOrigin: 'https://test.origin',
+          awaitResults: true,
+          awaitTimeoutMs: 5000,
+          apiKey: 'api-key-abc',
+        });
+
+        const mockFetch = jest.fn()
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({}),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({ status: 'COMPLETED', summaryStatus: 'COMPLETE' }),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              status: 'COMPLETED',
+              overallScore: 92.0,
+              totalUrls: 5,
+              regressionCount: 2,
+              regressions: [
+                {
+                  url: 'https://test.origin/home',
+                  variantName: 'Desktop Chrome',
+                  visualMatchScore: 90.0,
+                  diffUrl: 'https://diff-url/home.png',
+                  regressionbotSummary: [{ label: 'Footer', text: 'Color changed from red to green' }]
+                }
+              ],
+            }),
+          });
+        global.fetch = mockFetch;
+
+        await expect(sdk.finalizeJob()).rejects.toThrow(
+          'RegressionBot visual check failed: 2 regressions detected.'
+        );
+        expect(process.env.REGRESSIONBOT_JOB_ID).toBeUndefined();
+      })
+    );
+
+    it('throws error when polling times out', () =>
+      runIsolated(async (sdk) => {
+        const mockInitFetch = jest.fn().mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ jobId: 'job-12345' }),
+        });
+        global.fetch = mockInitFetch;
+        await sdk.initializeJob({
+          project: 'test-project',
+          testOrigin: 'https://test.origin',
+          awaitResults: true,
+          awaitTimeoutMs: 100,
+          apiKey: 'api-key-abc',
+        });
+
+        const mockFetch = jest.fn()
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({}),
+          })
+          .mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: async () => ({ status: 'PROCESSING', summaryStatus: 'PENDING' }),
+          });
+        global.fetch = mockFetch;
+
+        await expect(sdk.finalizeJob()).rejects.toThrow(
+          /RegressionBot visual check timed out/
+        );
+        expect(process.env.REGRESSIONBOT_JOB_ID).toBeUndefined();
+      })
+    );
+
+    it('throws error when job status is FAILED', () =>
+      runIsolated(async (sdk) => {
+        const mockInitFetch = jest.fn().mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ jobId: 'job-12345' }),
+        });
+        global.fetch = mockInitFetch;
+        await sdk.initializeJob({
+          project: 'test-project',
+          testOrigin: 'https://test.origin',
+          awaitResults: true,
+          awaitTimeoutMs: 5000,
+          apiKey: 'api-key-abc',
+        });
+
+        const mockFetch = jest.fn()
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({}),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({ status: 'FAILED', summaryStatus: 'COMPLETE' }),
+          });
+        global.fetch = mockFetch;
+
+        await expect(sdk.finalizeJob()).rejects.toThrow(
+          'RegressionBot job failed during screenshot capture or processing.'
         );
         expect(process.env.REGRESSIONBOT_JOB_ID).toBeUndefined();
       })
@@ -362,6 +575,53 @@ describe('RegressionBot Playwright SDK', () => {
       });
     });
 
+    it('globalSetup extracts await options from config and environment variables', async () => {
+      return new Promise<void>((resolve, reject) => {
+        jest.isolateModules(async () => {
+          try {
+            process.env.REGRESSIONBOT_PROJECT = 'env-project';
+            process.env.REGRESSIONBOT_API_KEY = 'env-key';
+            process.env.REGRESSIONBOT_AWAIT_RESULTS = 'false';
+            process.env.REGRESSIONBOT_AWAIT_TIMEOUT_MS = '30000';
+
+            const mockFetch = jest.fn().mockResolvedValueOnce({
+              ok: true,
+              status: 200,
+              json: async () => ({ jobId: 'job-global-setup-123' }),
+            });
+            global.fetch = mockFetch;
+
+            const globalSetup = require('./global-setup').default;
+            const sdk = require('./index');
+            const mockConfig: any = {
+              use: {
+                baseURL: 'https://test-origin.example.com',
+              },
+            };
+
+            await globalSetup(mockConfig);
+
+            const mockFinalizeFetch = jest.fn().mockResolvedValueOnce({
+              ok: true,
+              status: 200,
+              json: async () => ({}),
+            });
+            global.fetch = mockFinalizeFetch;
+
+            await sdk.finalizeJob();
+
+            expect(mockFinalizeFetch).toHaveBeenCalledTimes(1);
+
+            delete process.env.REGRESSIONBOT_AWAIT_RESULTS;
+            delete process.env.REGRESSIONBOT_AWAIT_TIMEOUT_MS;
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        });
+      });
+    });
+
     it('globalSetup throws if project name is missing', async () => {
       return new Promise<void>((resolve, reject) => {
         jest.isolateModules(async () => {
@@ -390,6 +650,7 @@ describe('RegressionBot Playwright SDK', () => {
           try {
             process.env.REGRESSIONBOT_JOB_ID = 'job-global-setup-123';
             process.env.REGRESSIONBOT_API_KEY = 'env-key';
+            process.env.REGRESSIONBOT_AWAIT_RESULTS = 'false';
 
             const mockFetch = jest.fn().mockResolvedValueOnce({
               ok: true,
@@ -413,6 +674,7 @@ describe('RegressionBot Playwright SDK', () => {
               }
             );
             expect(process.env.REGRESSIONBOT_JOB_ID).toBeUndefined();
+            delete process.env.REGRESSIONBOT_AWAIT_RESULTS;
             resolve();
           } catch (err) {
             reject(err);
