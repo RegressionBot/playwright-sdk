@@ -3,6 +3,9 @@ import { Page } from '@playwright/test';
 let activeJobId: string | null = null;
 let activeApiKey: string | null = process.env.REGRESSIONBOT_API_KEY || null;
 let activeApiUrl: string = process.env.REGRESSIONBOT_API_URL || 'https://api.regressionbot.com';
+let activeProject: string | null = null;
+let activeAwaitResults: boolean = true;
+let activeAwaitTimeoutMs: number = 60000;
 
 export interface SdkInitConfig {
   apiKey?: string;
@@ -12,6 +15,9 @@ export interface SdkInitConfig {
   commit?: string;
   testOrigin: string;
   devices?: string[];
+  // New configuration options
+  awaitResults?: boolean;    // Defaults to true
+  awaitTimeoutMs?: number;   // Defaults to 60000 (60s)
 }
 
 /**
@@ -20,17 +26,20 @@ export interface SdkInitConfig {
 async function apiRequest<T>(
   apiUrl: string,
   path: string,
-  method: 'POST' | 'PUT',
+  method: 'POST' | 'PUT' | 'GET',
   apiKey: string,
   body?: any
 ): Promise<T> {
   const url = `${apiUrl.replace(/\/$/, '')}${path}`;
+  const headers: Record<string, string> = {
+    'Authorization': `Bearer ${apiKey}`,
+  };
+  if (body) {
+    headers['Content-Type'] = 'application/json';
+  }
   const response = await fetch(url, {
     method,
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
 
@@ -68,6 +77,13 @@ export async function initializeJob(config: SdkInitConfig): Promise<string> {
   // Sync state
   activeApiKey = apiKey;
   activeApiUrl = apiUrl.replace(/\/$/, '');
+  activeProject = config.project;
+  activeAwaitResults = config.awaitResults ?? true;
+  activeAwaitTimeoutMs = config.awaitTimeoutMs ?? 60000;
+
+  // Propagate to environment variables for globalTeardown context
+  process.env.REGRESSIONBOT_AWAIT_RESULTS = activeAwaitResults ? 'true' : 'false';
+  process.env.REGRESSIONBOT_AWAIT_TIMEOUT_MS = activeAwaitTimeoutMs.toString();
 
   const payload = {
     project: config.project,
@@ -203,11 +219,127 @@ export async function finalizeJob(): Promise<void> {
       { jobId }
     );
 
-    // Reset local state
-    activeJobId = null;
-    delete process.env.REGRESSIONBOT_JOB_ID;
+    const awaitResults = process.env.REGRESSIONBOT_AWAIT_RESULTS !== undefined
+      ? process.env.REGRESSIONBOT_AWAIT_RESULTS === 'true'
+      : activeAwaitResults;
+
+    const awaitTimeoutMs = process.env.REGRESSIONBOT_AWAIT_TIMEOUT_MS !== undefined
+      ? parseInt(process.env.REGRESSIONBOT_AWAIT_TIMEOUT_MS, 10)
+      : activeAwaitTimeoutMs;
+
+    if (awaitResults) {
+      console.log(`[RegressionBot] Waiting for visual comparison and RegressionBot summary to complete (timeout: ${awaitTimeoutMs / 1000}s)...`);
+      const startTime = Date.now();
+      const intervalMs = 2000;
+      let jobStatus: any = null;
+
+      while (Date.now() - startTime < awaitTimeoutMs) {
+        try {
+          const data = await apiRequest<{
+            status: string;
+            summaryStatus?: string;
+            error?: string;
+          }>(
+            activeApiUrl,
+            `/job/${encodeURIComponent(jobId)}`,
+            'GET',
+            apiKey
+          );
+
+          const status = data.status;
+          const summaryStatus = data.summaryStatus;
+
+          const isDone =
+            status === 'FAILED' ||
+            ((status === 'COMPLETED' || status === 'APPROVED') &&
+              summaryStatus !== 'PENDING' &&
+              summaryStatus !== 'PROCESSING');
+
+          if (isDone) {
+            jobStatus = data;
+            break;
+          }
+        } catch (err: any) {
+          // Log polling error and keep trying unless timed out
+          console.warn(`[RegressionBot] Polling status failed: ${err.message}. Retrying...`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      }
+
+      if (!jobStatus) {
+        throw new Error(
+          `RegressionBot visual check timed out after ${awaitTimeoutMs / 1000}s.`
+        );
+      }
+
+      if (jobStatus.status === 'FAILED') {
+        throw new Error(
+          `RegressionBot job failed during screenshot capture or processing.`
+        );
+      }
+
+      const summary = await apiRequest<{
+        status: string;
+        overallScore: number;
+        totalUrls: number;
+        regressionCount: number;
+        regressions?: Array<{
+          url: string;
+          variantName: string;
+          visualMatchScore: number;
+          diffUrl?: string;
+          regressionbotSummary?: Array<{ label: string; text: string }>;
+        }>;
+      }>(
+        activeApiUrl,
+        `/job/${encodeURIComponent(jobId)}/summary`,
+        'GET',
+        apiKey
+      );
+
+      // Print visual summary directly to terminal logs
+      console.log('\n==================================================');
+      console.log('                 REGRESSIONBOT SUMMARY             ');
+      console.log('==================================================');
+      console.log(`Status:           ${summary.status}`);
+      console.log(`Overall Score:    ${summary.overallScore}/100`);
+      console.log(`Page Count:       ${summary.totalUrls}`);
+      console.log(`Regression Count: ${summary.regressionCount}`);
+
+      if (summary.regressionCount > 0 && summary.regressions && summary.regressions.length > 0) {
+        console.log('\n❌ Regressions found:');
+        for (const r of summary.regressions) {
+          console.log(`- ${r.url} [${r.variantName}] (Score: ${r.visualMatchScore.toFixed(2)})`);
+          if (r.diffUrl) {
+            console.log(`  Diff: ${r.diffUrl}`);
+          }
+          if (Array.isArray(r.regressionbotSummary) && r.regressionbotSummary.length > 0) {
+            console.log('  Summary:');
+            for (const item of r.regressionbotSummary) {
+              console.log(`    - ${item.label}: ${item.text}`);
+            }
+          } else if (r.regressionbotSummary) {
+            console.log(`  Summary: ${r.regressionbotSummary}`);
+          }
+        }
+      }
+      console.log('==================================================\n');
+
+      if (summary.regressionCount > 0) {
+        throw new Error(
+          `RegressionBot visual check failed: ${summary.regressionCount} regression${summary.regressionCount === 1 ? '' : 's'} detected.`
+        );
+      }
+    }
   } catch (err: any) {
     throw new Error(`Failed to finalize RegressionBot job: ${err.message}`);
+  } finally {
+    // Reset local state
+    activeJobId = null;
+    activeProject = null;
+    activeAwaitResults = true;
+    activeAwaitTimeoutMs = 60000;
+    delete process.env.REGRESSIONBOT_JOB_ID;
   }
 }
 
