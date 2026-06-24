@@ -2,6 +2,10 @@
   "name": "@regressionbot/playwright",
   "version": "0.1.2",
   "description": "Playwright integration client for RegressionBot parallel cloud visual regression comparisons",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RegressionBot/playwright-sdk"
+  },
   "Description": "Created package.json for @regressionbot/playwright SDK workspace",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
