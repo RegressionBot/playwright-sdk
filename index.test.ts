@@ -131,6 +131,38 @@ describe('RegressionBot Playwright SDK', () => {
         }
       )
     );
+
+    it('propagates runContext if provided', () =>
+      runIsolated(async (sdk) => {
+        const mockFetch = jest.fn().mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ jobId: 'job-12345' }),
+        });
+        global.fetch = mockFetch;
+
+        await sdk.initializeJob({
+          apiKey: 'api-key-abc',
+          project: 'test-project',
+          testOrigin: 'https://test.origin',
+          runContext: { ref: 'refs/heads/main', author: 'chris' },
+        });
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          'https://api.regressionbot.com/ci/job/init',
+          expect.objectContaining({
+            body: JSON.stringify({
+              project: 'test-project',
+              branch: 'main',
+              commit: '',
+              testOrigin: 'https://test.origin',
+              devices: ['Desktop Chrome'],
+              runContext: { ref: 'refs/heads/main', author: 'chris' },
+            }),
+          })
+        );
+      })
+    );
   });
 
   describe('captureVisual', () => {
@@ -254,6 +286,98 @@ describe('RegressionBot Playwright SDK', () => {
           expect.any(Function),
           { id: 'style-tag' }
         );
+      })
+    );
+
+    it('extracts DOM snapshot, compresses it and uploads if domUploadUrl is provided', () =>
+      runIsolated(async (sdk) => {
+        process.env.REGRESSIONBOT_JOB_ID = 'job-12345';
+        process.env.REGRESSIONBOT_API_KEY = 'api-key-abc';
+
+        const mockDom = { tagName: 'BODY', children: [{ tagName: 'DIV', text: 'Hello' }] };
+        mockPage.evaluate = jest.fn().mockResolvedValue(mockDom);
+
+        const mockFetch = jest.fn()
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              uploadUrl: 'https://cloud-storage.upload/job-12345/homepage.png',
+              domUploadUrl: 'https://cloud-storage.upload/job-12345/homepage.dom.json.gz',
+            }),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            text: async () => 'OK',
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            text: async () => 'OK',
+          });
+        global.fetch = mockFetch;
+
+        await sdk.captureVisual(mockPage, 'homepage');
+
+        expect(mockPage.evaluate).toHaveBeenCalled();
+        // First fetch: get upload URLs
+        expect(mockFetch).toHaveBeenNthCalledWith(
+          1,
+          'https://api.regressionbot.com/ci/job/upload-url',
+          expect.any(Object)
+        );
+        // Second fetch: upload PNG
+        expect(mockFetch).toHaveBeenNthCalledWith(
+          2,
+          'https://cloud-storage.upload/job-12345/homepage.png',
+          expect.any(Object)
+        );
+        // Third fetch: upload zipped DOM JSON
+        expect(mockFetch).toHaveBeenNthCalledWith(
+          3,
+          'https://cloud-storage.upload/job-12345/homepage.dom.json.gz',
+          {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Encoding': 'gzip',
+            },
+            body: expect.any(Buffer),
+          }
+        );
+      })
+    );
+
+    it('does not upload DOM snapshot if SKIP_DOM_UPLOAD is true', () =>
+      runIsolated(async (sdk) => {
+        process.env.REGRESSIONBOT_JOB_ID = 'job-12345';
+        process.env.REGRESSIONBOT_API_KEY = 'api-key-abc';
+        process.env.SKIP_DOM_UPLOAD = 'true';
+
+        const mockDom = { tagName: 'BODY', children: [{ tagName: 'DIV', text: 'Hello' }] };
+        mockPage.evaluate = jest.fn().mockResolvedValue(mockDom);
+
+        const mockFetch = jest.fn()
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              uploadUrl: 'https://cloud-storage.upload/job-12345/homepage.png',
+              domUploadUrl: 'https://cloud-storage.upload/job-12345/homepage.dom.json.gz',
+            }),
+          })
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            text: async () => 'OK',
+          });
+        global.fetch = mockFetch;
+
+        await sdk.captureVisual(mockPage, 'homepage');
+
+        expect(mockFetch).toHaveBeenCalledTimes(2); // Only URLs req + PNG upload
+        delete process.env.SKIP_DOM_UPLOAD;
       })
     );
   });
@@ -614,6 +738,145 @@ describe('RegressionBot Playwright SDK', () => {
 
             delete process.env.REGRESSIONBOT_AWAIT_RESULTS;
             delete process.env.REGRESSIONBOT_AWAIT_TIMEOUT_MS;
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        });
+      });
+    });
+
+    it('globalSetup extracts runContext from env (JSON format)', async () => {
+      return new Promise<void>((resolve, reject) => {
+        jest.isolateModules(async () => {
+          try {
+            process.env.REGRESSIONBOT_PROJECT = 'env-project';
+            process.env.REGRESSIONBOT_API_KEY = 'env-key';
+            process.env.REGRESSIONBOT_RUN_CONTEXT = '{"pr":123,"repo":"my-repo"}';
+
+            const mockFetch = jest.fn().mockResolvedValueOnce({
+              ok: true,
+              status: 200,
+              json: async () => ({ jobId: 'job-123' }),
+            });
+            global.fetch = mockFetch;
+
+            const globalSetup = require('./global-setup').default;
+            const mockConfig: any = {
+              use: {
+                baseURL: 'https://test-origin.example.com',
+              },
+            };
+
+            await globalSetup(mockConfig);
+
+            expect(mockFetch).toHaveBeenCalledWith(
+              'https://api.regressionbot.com/ci/job/init',
+              expect.objectContaining({
+                body: JSON.stringify({
+                  project: 'env-project',
+                  branch: 'main',
+                  commit: '',
+                  testOrigin: 'https://test-origin.example.com',
+                  devices: ['Desktop Chrome'],
+                  runContext: { pr: 123, repo: 'my-repo' },
+                }),
+              })
+            );
+
+            delete process.env.REGRESSIONBOT_RUN_CONTEXT;
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        });
+      });
+    });
+
+    it('globalSetup extracts runContext from env (fallback text format)', async () => {
+      return new Promise<void>((resolve, reject) => {
+        jest.isolateModules(async () => {
+          try {
+            process.env.REGRESSIONBOT_PROJECT = 'env-project';
+            process.env.REGRESSIONBOT_API_KEY = 'env-key';
+            process.env.REGRESSIONBOT_RUN_CONTEXT = 'PR #123 Build';
+
+            const mockFetch = jest.fn().mockResolvedValueOnce({
+              ok: true,
+              status: 200,
+              json: async () => ({ jobId: 'job-123' }),
+            });
+            global.fetch = mockFetch;
+
+            const globalSetup = require('./global-setup').default;
+            const mockConfig: any = {
+              use: {
+                baseURL: 'https://test-origin.example.com',
+              },
+            };
+
+            await globalSetup(mockConfig);
+
+            expect(mockFetch).toHaveBeenCalledWith(
+              'https://api.regressionbot.com/ci/job/init',
+              expect.objectContaining({
+                body: JSON.stringify({
+                  project: 'env-project',
+                  branch: 'main',
+                  commit: '',
+                  testOrigin: 'https://test-origin.example.com',
+                  devices: ['Desktop Chrome'],
+                  runContext: { changeDescription: 'PR #123 Build' },
+                }),
+              })
+            );
+
+            delete process.env.REGRESSIONBOT_RUN_CONTEXT;
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        });
+      });
+    });
+
+    it('globalSetup extracts runContext from Playwright config (use & metadata)', async () => {
+      return new Promise<void>((resolve, reject) => {
+        jest.isolateModules(async () => {
+          try {
+            process.env.REGRESSIONBOT_PROJECT = 'env-project';
+            process.env.REGRESSIONBOT_API_KEY = 'env-key';
+
+            const mockFetch = jest.fn().mockResolvedValueOnce({
+              ok: true,
+              status: 200,
+              json: async () => ({ jobId: 'job-123' }),
+            });
+            global.fetch = mockFetch;
+
+            const globalSetup = require('./global-setup').default;
+            const mockConfig: any = {
+              use: {
+                baseURL: 'https://test-origin.example.com',
+                regressionbotRunContext: { value: 'from-use' },
+              },
+            };
+
+            await globalSetup(mockConfig);
+
+            expect(mockFetch).toHaveBeenCalledWith(
+              'https://api.regressionbot.com/ci/job/init',
+              expect.objectContaining({
+                body: JSON.stringify({
+                  project: 'env-project',
+                  branch: 'main',
+                  commit: '',
+                  testOrigin: 'https://test-origin.example.com',
+                  devices: ['Desktop Chrome'],
+                  runContext: { value: 'from-use' },
+                }),
+              })
+            );
             resolve();
           } catch (err) {
             reject(err);

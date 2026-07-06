@@ -55,6 +55,19 @@ async function globalSetup(config: FullConfig) {
         (config as any).metadata?.regressionbotAwaitTimeoutMs ||
         undefined;
 
+  let runContext: any = undefined;
+  if (process.env.REGRESSIONBOT_RUN_CONTEXT) {
+    try {
+      runContext = JSON.parse(process.env.REGRESSIONBOT_RUN_CONTEXT);
+    } catch {
+      runContext = { changeDescription: process.env.REGRESSIONBOT_RUN_CONTEXT };
+    }
+  } else if ((config as any).use?.regressionbotRunContext !== undefined) {
+    runContext = (config as any).use.regressionbotRunContext;
+  } else if ((config as any).metadata?.regressionbotRunContext !== undefined) {
+    runContext = (config as any).metadata.regressionbotRunContext;
+  }
+
   await initializeJob({
     project,
     testOrigin,
@@ -65,6 +78,7 @@ async function globalSetup(config: FullConfig) {
     devices,
     awaitResults,
     awaitTimeoutMs,
+    runContext,
   });
 }
 
