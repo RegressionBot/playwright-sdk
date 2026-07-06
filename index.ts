@@ -1,4 +1,8 @@
 import { Page } from '@playwright/test';
+import { gzip } from 'zlib';
+import { promisify } from 'util';
+
+const gzipAsync = promisify(gzip);
 
 let activeJobId: string | null = null;
 let activeApiKey: string | null = process.env.REGRESSIONBOT_API_KEY || null;
@@ -18,6 +22,7 @@ export interface SdkInitConfig {
   // New configuration options
   awaitResults?: boolean;    // Defaults to true
   awaitTimeoutMs?: number;   // Defaults to 60000 (60s)
+  runContext?: any;
 }
 
 /**
@@ -85,13 +90,17 @@ export async function initializeJob(config: SdkInitConfig): Promise<string> {
   process.env.REGRESSIONBOT_AWAIT_RESULTS = activeAwaitResults ? 'true' : 'false';
   process.env.REGRESSIONBOT_AWAIT_TIMEOUT_MS = activeAwaitTimeoutMs.toString();
 
-  const payload = {
+  const payload: any = {
     project: config.project,
     branch: config.branch || process.env.CI_COMMIT_REF_NAME || 'main',
     commit: config.commit || process.env.CI_COMMIT_SHA || '',
     testOrigin: config.testOrigin.replace(/\/$/, ''),
     devices: config.devices || ['Desktop Chrome'],
   };
+
+  if (config.runContext) {
+    payload.runContext = config.runContext;
+  }
 
   try {
     const data = await apiRequest<{ jobId: string }>(
@@ -141,22 +150,133 @@ export async function captureVisual(
     styleElementHandle = await page.addStyleTag({ content: cssRules });
   }
 
+  let domSnapshot: string | null = null;
   try {
-    // 2. Take local full-page screenshot
+    // 2. Extract DOM snapshot using the browser serialization logic
+    try {
+      const rawDom = await page.evaluate(() => {
+        const whitelist = [
+          'color', 'background-color', 'font-size', 'font-weight', 
+          'font-style', 'font-family', 'display', 'position', 
+          'opacity', 'visibility', 'width', 'height'
+        ];
+        
+        function serializeNode(el: Element): any {
+          if (el.nodeType !== Node.ELEMENT_NODE) {
+            return null;
+          }
+          
+          // Skip collapsed/invisible nodes immediately
+          const offsetW = (el as HTMLElement).offsetWidth;
+          const offsetH = (el as HTMLElement).offsetHeight;
+          if (offsetW === 0 && offsetH === 0) {
+            return null;
+          }
+          
+          const rect = el.getBoundingClientRect();
+          if (rect.width === 0 || rect.height === 0) {
+            return null;
+          }
+          
+          const node: any = {
+            tagName: el.tagName,
+            rect: {
+              x: Math.round(rect.left + window.scrollX),
+              y: Math.round(rect.top + window.scrollY),
+              w: Math.round(rect.width),
+              h: Math.round(rect.height)
+            }
+          };
+          
+          if (el.id) node.id = el.id;
+          if (el.className && typeof el.className === 'string') {
+            node.className = el.className.trim();
+          }
+          
+          // Look for direct text content
+          let hasDirectText = false;
+          let directText = '';
+          for (let i = 0; i < el.childNodes.length; i++) {
+            const child = el.childNodes[i];
+            if (child.nodeType === Node.TEXT_NODE) {
+              const textVal = child.nodeValue?.trim() || '';
+              if (textVal.length > 0) {
+                hasDirectText = true;
+                directText += (directText ? ' ' : '') + textVal;
+              }
+            }
+          }
+          
+          const tagName = el.tagName.toUpperCase();
+          const isLeafOrVisual = hasDirectText || 
+            ['IMG', 'BUTTON', 'INPUT', 'TEXTAREA', 'SELECT', 'A', 'SVG'].includes(tagName);
+          
+          if (isLeafOrVisual) {
+            const computed = window.getComputedStyle(el);
+            if (computed.display === 'none' || computed.visibility === 'hidden' || computed.opacity === '0') {
+              return null;
+            }
+            
+            const styles: Record<string, string> = {};
+            whitelist.forEach(prop => {
+              const val = computed.getPropertyValue(prop);
+              if (val && 
+                  !(prop === 'opacity' && val === '1') && 
+                  !(prop === 'visibility' && val === 'visible') && 
+                  !(prop === 'display' && val === 'block') &&
+                  !(prop === 'position' && val === 'static')) {
+                styles[prop] = val;
+              }
+            });
+            
+            if (Object.keys(styles).length > 0) {
+              node.styles = styles;
+            }
+            
+            if (hasDirectText) {
+              node.text = directText.slice(0, 100);
+            }
+          }
+          
+          const children: any[] = [];
+          for (let i = 0; i < el.children.length; i++) {
+            const childNode = serializeNode(el.children[i]);
+            if (childNode) {
+              children.push(childNode);
+            }
+          }
+          
+          if (children.length > 0) {
+            node.children = children;
+          } else if (!isLeafOrVisual) {
+            return null;
+          }
+          
+          return node;
+        }
+        
+        return serializeNode(document.body);
+      });
+      domSnapshot = JSON.stringify(rawDom);
+    } catch (domErr: any) {
+      console.warn(`[RegressionBot] Failed to serialize DOM: ${domErr.message}`);
+    }
+
+    // 3. Take local full-page screenshot
     const buffer = await page.screenshot({
       fullPage: true,
       type: 'png',
       animations: 'disabled',
     });
 
-    // 3. Clean up the style tags immediately
+    // 4. Clean up the style tags immediately
     if (styleElementHandle) {
       await page.evaluate((el: any) => el?.remove(), styleElementHandle);
       styleElementHandle = null;
     }
 
-    // 4. Request presigned upload URL
-    const data = await apiRequest<{ uploadUrl: string }>(
+    // 5. Request presigned upload URL
+    const data = await apiRequest<{ uploadUrl: string; domUploadUrl?: string }>(
       activeApiUrl,
       '/ci/job/upload-url',
       'POST',
@@ -168,12 +288,12 @@ export async function captureVisual(
       }
     );
 
-    const { uploadUrl } = data;
+    const { uploadUrl, domUploadUrl } = data;
     if (!uploadUrl) {
       throw new Error('Upload endpoint failed to return presigned upload URL.');
     }
 
-    // 5. Perform direct cloud storage upload
+    // 6. Perform direct cloud storage upload of screenshot
     const uploadResponse = await fetch(uploadUrl, {
       method: 'PUT',
       headers: {
@@ -185,6 +305,28 @@ export async function captureVisual(
     if (!uploadResponse.ok) {
       const errorText = await uploadResponse.text();
       throw new Error(`Cloud storage upload failed: ${uploadResponse.statusText} - ${errorText}`);
+    }
+
+    // 7. Perform direct cloud storage upload of DOM snapshot if domUploadUrl is available
+    if (domSnapshot && domUploadUrl && process.env.SKIP_DOM_UPLOAD !== 'true') {
+      try {
+        const compressedDom = await gzipAsync(domSnapshot);
+        const domUploadResponse = await fetch(domUploadUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Encoding': 'gzip',
+          },
+          body: compressedDom as any,
+        });
+
+        if (!domUploadResponse.ok) {
+          const errorText = await domUploadResponse.text();
+          console.warn(`[RegressionBot] DOM snapshot upload failed: ${domUploadResponse.statusText} - ${errorText}`);
+        }
+      } catch (domErr: any) {
+        console.warn(`[RegressionBot] Failed to compress or upload DOM snapshot: ${domErr.message}`);
+      }
     }
   } catch (err: any) {
     // Make sure styles are removed on error
